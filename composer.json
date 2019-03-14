@@ -1,6 +1,8 @@
 {
     "require": {
-        "predis/predis": "^1.1"
+        "predis/predis": "^1.1",
+        "ext-json": "*",
+        "ext-redis": "*"
     },
     "autoload": {
         "psr-4": {

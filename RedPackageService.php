@@ -17,18 +17,11 @@ class RedPackageService
     public $groupId = '';
 
     /**
-     * 发红包用户
-     *
-     * @var string
-     */
-    public $sender = '';
-
-    /**
      * 抢红包用户
      *
      * @var string
      */
-    public $geter = '';
+    public $getter = '';
 
     /**
      * redis 存储
@@ -42,7 +35,7 @@ class RedPackageService
      *
      * @var string
      */
-    static $part_statuc = 'GroupRed:';
+    static $part_static = 'GroupRed:';
 
     /**
      * 红包具体信息 存储类型：string
@@ -97,13 +90,20 @@ class RedPackageService
      */
     public $indexDb = 10;
 
+    /**
+     * 红包过期时间
+     * @var int
+     */
+    public $passTime = 3600;
 
+    const RED_SEND_ERR    = 4000;
     const RED_PASS_CODE   = 4001;
     const RED_VAINLY_CODE = 4002;
     const RED_GATED_CODE  = 4003;
-    const RED_GATED_QUEUE = 4006;
+    const RED_GATED_QUEUE = 4004;
 
     static $redErrLang = [
+        self::RED_SEND_ERR    => '红包派发失败！',
         self::RED_PASS_CODE   => '手慢了，红包派完了',
         self::RED_VAINLY_CODE => '该红包已过期',
         self::RED_GATED_CODE  => '您已领过红包',
@@ -140,13 +140,17 @@ class RedPackageService
 
     /**
      * 发红包
+     *
      * @param $group
      * @param $uid
+     * @param $sender
      * @param $money
      * @param $num
      * @param $words
+     *
+     * @return array|string
      */
-    public function sendRedPackage($group, $uid, $money, $num, $words)
+    public function sendRedPackage($group, $uid, $sender, $money, $num, $words)
     {
         //初始化时间
         $runTime = time();
@@ -155,17 +159,17 @@ class RedPackageService
         $key = $this->createHotKey($group, $uid, $runTime);
 
         //拆分key
-        $splily_key = $key . $this->group_red_split;
+        $splitKey = $key . $this->group_red_split;
 
         //红包详情
-        $detail_key = $key . $this->group_red_detail;
+        $detailKey = $key . $this->group_red_detail;
 
         //拆分红包
         $splily = $this->doubleAveragePackage($money, $num);
 
         //红包详情
         $red_detail = [
-            'sender'      => $this->sender,
+            'sender'      => $sender,
             'total_money' => $money,
             'total_num'   => $num,
             'send_word'   => $words,
@@ -174,23 +178,103 @@ class RedPackageService
             'init_time'   => $runTime,
             'start_time'  => $runTime,
             'end_time'    => $runTime,
+            'expire_time' => $runTime + $this->passTime,
             'is_valid'    => 1,
         ];
         try {
-            $this->redis->hmset($detail_key, $red_detail);
-            $this->redis->lpush($splily_key, $splily);
+            $this->redis->hmset($detailKey, $red_detail);
+            $this->redis->lpush($splitKey, $splily);
         } catch (\Exception $e) {
-            return "发红包失败";
+            return json_encode(['code' => self::RED_SEND_ERR, 'msg' => static::$redErrLang[self::RED_SEND_ERR]]);
         }
-        return ['key' => $key];
+        return json_encode(['redKey' => $key]);
     }
 
     /**
      * 抢红包
+     *
+     * @param $group_red_id
+     * @param $getter
+     * @return false|string
      */
-    public function receiveRedPackage($grop_id, $geter)
+    public function receiveRedPackage($group_red_id, $getter)
     {
+        $redKey    = $group_red_id . $this->group_red_detail;
+        $splitKey  = $group_red_id . $this->group_red_split;
+        $getterKey = $group_red_id . $this->group_red_geter_list;
+        $userLock  = $group_red_id . $this->lock . $getter;
+        $recordKey = $group_red_id . $this->group_red_records;
+        $lock      = $this->redis->get($userLock);
 
+        //加锁
+        if ($lock && $lock == $getter) {
+            return json_encode(['code' => self::RED_GATED_QUEUE, 'msg' => static::$redErrLang[self::RED_GATED_QUEUE]]);
+        } else {
+            $isSet = $this->addLock($userLock, $getter, $this->passTime);
+            if (!$isSet) {
+                return json_encode(['code' => self::RED_GATED_QUEUE, 'msg' => '抢红包失败了']);
+            }
+        }
+
+        //判断抢过没有
+        $isGet = $this->redis->sismember($recordKey, $getter);
+
+        if ($isGet) {
+            $this->removeLock($userLock);
+            return json_encode(['code' => self::RED_GATED_CODE, 'msg' => static::$redErrLang[self::RED_GATED_CODE]]);
+        }
+
+        $redInfo = $this->redis->hgetall($redKey);
+        if (!empty($redInfo)) {
+            //过期
+            if ($redInfo['expire_time'] < time() && !$redInfo['is_valid']) {
+                $this->removeLock($userLock);
+                return json_encode(['code' => self::RED_VAINLY_CODE, 'msg' => static::$redErrLang[self::RED_VAINLY_CODE]]);
+            }
+
+            //手慢
+            if ($redInfo['expire_time'] > time() && $redInfo['left_num'] == 0) {
+                $this->removeLock($userLock);
+                return json_encode(['code' => self::RED_PASS_CODE, 'msg' => static::$redErrLang[self::RED_PASS_CODE]]);
+            }
+        }
+
+        //取红包
+        $this->redis->multi();
+        $this->redis->rpop($splitKey);
+        $this->redis->hincrby($redKey, 'left_num', -1);
+        $this->redis->hincrby($redKey, 'receive_num', 1);
+        $arr = $this->redis->exec();
+        if ($arr && ($arr[1] >= 0 || $arr[0] != false)) {
+
+            $getTedRed = [
+                'uid'          => $getter,
+                'get_time'     => time(),
+                'get_money'    => $arr[0],
+                'is_best'      => false,
+                'group_red_id' => $group_red_id,
+            ];
+
+            //存入用户抢到的数据
+            $this->redis->multi();
+            $this->redis->hmset($getterKey . $getter, $getTedRed);
+            $this->redis->hset($redKey, 'end_time', time());
+            $this->redis->sadd($recordKey, $getter);
+            $get_arr = $this->redis->exec();
+
+            if (!$get_arr) {//返回红包
+                $this->redis->multi();
+                $this->redis->lpush($splitKey, $arr[0]);
+                $this->redis->hincrby($redKey, 'left_num', +1);
+                $this->redis->hincrby($redKey, 'receive_num', -1);
+                $this->redis->exec();
+                $this->removeLock($userLock);
+                return json_encode(['code' => self::RED_GATED_QUEUE, 'msg' => static::$redErrLang[self::RED_GATED_QUEUE]]);
+            }
+            //解锁
+            $this->removeLock($userLock);
+            return json_encode($getTedRed);
+        }
     }
 
     /**
@@ -216,10 +300,44 @@ class RedPackageService
 
     /**
      * 生成redis 前缀
+     *
+     * @param $group
+     * @param $uid
+     * @param $runTime
+     *
+     * @return string
      */
     protected function createHotKey($group, $uid, $runTime)
     {
         $key = $this->part . $group . static::$dispatch . $uid . static::$dispatch . $runTime;
         return $key;
+    }
+
+    /**
+     * 加锁
+     * Author: JkSen
+     * Time  : 2019/3/14 17:48
+     * @param $key
+     * @param $value
+     * @param $expire
+     * @return bool
+     */
+    protected function addLock($key, $value, $expire)
+    {
+        $this->redis->setnx($key, $value);
+        $this->redis->expire($key, $expire);
+        return true;
+    }
+
+    /**
+     * 删除锁
+     * Author: JkSen
+     * Time  : 2019/3/14 17:51
+     * @param $key
+     * @return int
+     */
+    protected function removeLock($key)
+    {
+        return $this->redis->del([$key]);
     }
 }

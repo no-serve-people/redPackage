@@ -19,5 +19,9 @@ $uid    = 10086;
 $money  = 1000;
 $num    = 9;
 $words  = "大吉大利，今晚吃鸡";
-$res = $client->sendRedPackage($group, $uid, $money, $num, $words);
-var_dump($res);
+//发红包
+$res = $client->sendRedPackage($group, $uid,'jikesen', $money, $num, $words);
+//抢红包
+$res = $client->receiveRedPackage(json_encode($res,true)['redKey'],10041);
+echo '<pre>';
+print_r($res);
