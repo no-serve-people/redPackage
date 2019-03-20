@@ -19,6 +19,8 @@ $uid    = 10086;
 $money  = 1000;
 $num    = 9;
 $words  = "大吉大利，今晚吃鸡";
+
+$client->test();die;
 //发红包
 $res = $client->sendRedPackage($group, $uid,'jikesen', $money, $num, $words);
 //抢红包

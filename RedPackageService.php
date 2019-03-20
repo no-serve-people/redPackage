@@ -347,7 +347,6 @@ class RedPackageService
     protected function addLock($key, $value, $expire)
     {
         $res = $this->redis->set($key, $value, ['nx', 'ex' => $expire]);
-        echo $res;
         /*$setLock = $this->redis->setnx($key, $value);
         if ($setLock) {
             $setExpire = $this->redis->expire($key, $expire);
@@ -355,8 +354,8 @@ class RedPackageService
                 return true;
             }
             return false;
-        }*/
-        // return false;
+        }
+         return false;*/
     }
 
     /**
@@ -371,5 +370,12 @@ class RedPackageService
     protected function removeLock($key)
     {
         return $this->redis->del([$key]);
+    }
+
+    public function test()
+    {
+       // var_dump('asdaa');die;
+        $res = $this->redis->setnx('aaa', 123123, ['nx', 'ex' => 400]);
+        echo $res;
     }
 }
