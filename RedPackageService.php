@@ -74,6 +74,7 @@ class RedPackageService
 
     /**
      * 分离符
+     *
      * @var string
      */
     static $dispatch = '_';
@@ -92,6 +93,7 @@ class RedPackageService
 
     /**
      * 红包过期时间
+     *
      * @var int
      */
     public $passTime = 3600;
@@ -112,6 +114,7 @@ class RedPackageService
 
     /**
      * RedPackageService constructor.
+     *
      * @param array $config
      */
     public function __construct($config = [])
@@ -131,7 +134,8 @@ class RedPackageService
         $this->redis = new \Predis\Client($config);
         try {
             $this->redis->ping();
-        } catch (Exception $e) {
+        }
+        catch (Exception $e) {
             return ("You must first turn on redis-server");
         }
 
@@ -184,7 +188,8 @@ class RedPackageService
         try {
             $this->redis->hmset($detailKey, $red_detail);
             $this->redis->lpush($splitKey, $splily);
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return json_encode(['code' => self::RED_SEND_ERR, 'msg' => static::$redErrLang[self::RED_SEND_ERR]]);
         }
         return json_encode(['redKey' => $key]);
@@ -195,6 +200,7 @@ class RedPackageService
      *
      * @param $group_red_id
      * @param $getter
+     *
      * @return false|string
      */
     public function receiveRedPackage($group_red_id, $getter)
@@ -225,19 +231,23 @@ class RedPackageService
         }
 
         $redInfo = $this->redis->hgetall($redKey);
-        if (!empty($redInfo)) {
-            //过期
-            if ($redInfo['expire_time'] < time() && !$redInfo['is_valid']) {
-                $this->removeLock($userLock);
-                return json_encode(['code' => self::RED_VAINLY_CODE, 'msg' => static::$redErrLang[self::RED_VAINLY_CODE]]);
-            }
 
-            //手慢
-            if ($redInfo['expire_time'] > time() && $redInfo['left_num'] == 0) {
-                $this->removeLock($userLock);
-                return json_encode(['code' => self::RED_PASS_CODE, 'msg' => static::$redErrLang[self::RED_PASS_CODE]]);
-            }
+        if (empty($redInfo)) {
+            //获取失败 抛出异常
         }
+
+        //过期
+        if ($redInfo['expire_time'] < time() && !$redInfo['is_valid']) {
+            $this->removeLock($userLock);
+            return json_encode(['code' => self::RED_VAINLY_CODE, 'msg' => static::$redErrLang[self::RED_VAINLY_CODE]]);
+        }
+
+        //手慢
+        if ($redInfo['expire_time'] > time() && $redInfo['left_num'] == 0) {
+            $this->removeLock($userLock);
+            return json_encode(['code' => self::RED_PASS_CODE, 'msg' => static::$redErrLang[self::RED_PASS_CODE]]);
+        }
+
 
         //取红包
         $this->redis->multi();
@@ -245,7 +255,12 @@ class RedPackageService
         $this->redis->hincrby($redKey, 'left_num', -1);
         $this->redis->hincrby($redKey, 'receive_num', 1);
         $arr = $this->redis->exec();
-        if ($arr && ($arr[1] >= 0 || $arr[0] != false)) {
+
+        if(!$arr){
+            $this->removeLock($userLock);
+        }
+
+        if ($arr[1] >= 0 || $arr[0] != false) {
 
             $getTedRed = [
                 'uid'          => $getter,
@@ -275,16 +290,21 @@ class RedPackageService
             $this->removeLock($userLock);
             return json_encode($getTedRed);
         }
+
+
     }
 
     /**
      * 二分法拆分红包
+     *
      * @param $total
      * @param $num
+     *
      * @return array
      */
     protected function doubleAveragePackage($total, $num)
     {
+        
         $red_packet = [];
         $min        = 3;//最小金额
         for ($i = 1; $i < $num; $i++) {
@@ -317,23 +337,35 @@ class RedPackageService
      * 加锁
      * Author: JkSen
      * Time  : 2019/3/14 17:48
+     *
      * @param $key
      * @param $value
      * @param $expire
+     *
      * @return bool
      */
     protected function addLock($key, $value, $expire)
     {
-        $this->redis->setnx($key, $value);
-        $this->redis->expire($key, $expire);
-        return true;
+        $res = $this->redis->set($key, $value, ['nx', 'ex' => $expire]);
+        echo $res;
+        /*$setLock = $this->redis->setnx($key, $value);
+        if ($setLock) {
+            $setExpire = $this->redis->expire($key, $expire);
+            if ($setExpire) {
+                return true;
+            }
+            return false;
+        }*/
+        // return false;
     }
 
     /**
      * 删除锁
      * Author: JkSen
      * Time  : 2019/3/14 17:51
+     *
      * @param $key
+     *
      * @return int
      */
     protected function removeLock($key)
