@@ -22,6 +22,6 @@ $words  = "大吉大利，今晚吃鸡";
 //发红包
 $res = $client->sendRedPackage($group, $uid,'jikesen', $money, $num, $words);
 //抢红包
-$res = $client->receiveRedPackage(json_encode($res,true)['redKey'],10041);
+$res = $client->receiveRedPackage(json_decode($res,true)['redKey'],10041);
 echo '<pre>';
 print_r($res);
